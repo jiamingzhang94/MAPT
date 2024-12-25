@@ -36,7 +36,7 @@ _MODELS = {
 }
 
 
-def _download(url: str, root: str = os.path.expanduser("~/.cache/clip")):
+def _download(url: str, root: str = os.path.expanduser("~/.cache/clip_custom")):
     os.makedirs(root, exist_ok=True)
     filename = os.path.basename(url)
 
@@ -89,7 +89,7 @@ def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_a
     Parameters
     ----------
     name : str
-        A model name listed by `clip.available_models()`, or the path to a model checkpoint containing the state_dict
+        A model name listed by `clip_custom.available_models()`, or the path to a model checkpoint containing the state_dict
 
     device : Union[str, torch.device]
         The device to put the loaded model

@@ -1,10 +1,12 @@
+import os
+os.environ["CUDA_VISIBLE_DEVICES"]='0'
 import argparse
 import torch
 
 from dassl.utils import setup_logger, set_random_seed, collect_env_info
 from dassl.config import get_cfg_default
 from dassl.engine import build_trainer
-
+import pickle
 # custom
 import datasets.oxford_pets
 import datasets.oxford_flowers
@@ -75,6 +77,16 @@ def reset_cfg(cfg, args):
     if args.head:
         cfg.MODEL.HEAD.NAME = args.head
 
+    if args.hard_prompt:
+        cfg.TEST.HARD_PROMPT = True
+
+    if not args.hard_prompt:
+        cfg.TEST.HARD_PROMPT = False
+
+    if args.depth :
+        cfg.TRAINER.MAPLE.PROMPT_DEPTH = args.depth
+
+
 
 def extend_cfg(cfg):
     """
@@ -131,6 +143,7 @@ def extend_cfg(cfg):
     cfg.TRAINER.VPT.PROMPT_DEPTH_VISION = 1  # if set to 1, will represent shallow vision prompting only
     cfg.DATASET.SUBSAMPLE_CLASSES = "all"  # all, base or new
 
+    # cfg.OPTIM.MAX_EPOCH = 1
 
 def setup_cfg(args):
     cfg = get_cfg_default()
@@ -149,7 +162,7 @@ def setup_cfg(args):
 
     # 4. From optional input arguments
     cfg.merge_from_list(args.opts)
-
+    # cfg.OPTIM.MAX_EPOCH = 1
     cfg.freeze()
 
     return cfg
@@ -157,6 +170,11 @@ def setup_cfg(args):
 
 def main(args):
     cfg = setup_cfg(args)
+    # cfg.defrost()
+    # cfg.OPTIM.MAX_EPOCH = 1
+    # cfg.freeze()
+    # with open("output/cfg.pkl", "wb") as f:
+    #     pickle.dump(cfg, f)
     if cfg.SEED >= 0:
         print("Setting fixed seed: {}".format(cfg.SEED))
         set_random_seed(cfg.SEED)
@@ -167,19 +185,25 @@ def main(args):
 
     print_args(args, cfg)
     print("Collecting env info ...")
-    print("** System info **\n{}\n".format(collect_env_info()))
+    # print("** System info **\n{}\n".format(collect_env_info()))
 
     trainer = build_trainer(cfg)
 
     if args.eval_only:
-        trainer.load_model(args.model_dir, epoch=args.load_epoch)
-        trainer.test()
-        trainer.test_adv(args.surrogate)
-        return
+        if not args.hard_prompt:
+            trainer.load_model(args.model_dir, epoch=args.load_epoch)
+            trainer.test(inference_output_dir=args.inference_output_dir)
+            trainer.test_adv(adv_inference_output_dir=args.adv_inference_output_dir, adv_image_dir=args.adv_image_dir,attack_type=args.attack_type)
+            return
+        else:
+            # trainer.load_model(args.model_dir, epoch=args.load_epoch)
+            trainer.test_hard_prompt(inference_output_dir=args.inference_output_dir)
+            trainer.test_hard_prompt_adv(adv_inference_output_dir=args.adv_inference_output_dir, adv_image_dir=args.adv_image_dir,attack_type=args.attack_type)
+            return
 
     if not args.no_train:
         trainer.train()
-        trainer.test_adv(args.surrogate)
+        trainer.test_adv(surrogate=args.surrogate)
 
 
 if __name__ == "__main__":
@@ -216,12 +240,17 @@ if __name__ == "__main__":
     parser.add_argument("--trainer", type=str, default="MaPLe", help="name of trainer")
     parser.add_argument("--backbone", type=str, default="", help="name of CNN backbone")
     parser.add_argument("--head", type=str, default="", help="name of head")
-    parser.add_argument("--eval-only", default=False)
+    parser.add_argument("--eval-only", action="store_true",default=False)
     parser.add_argument("--adv-train", default=True)
     parser.add_argument("--surrogate", type=str, default="vanilla_model")
     parser.add_argument("--depth", type=int, default=1, help="depth")
     parser.add_argument("--eps", type=float, default=8/255.)
 
+    parser.add_argument("--attack_type", type=str, default="fgsm", help="attack type")
+    parser.add_argument("--inference_output_dir", type=str, default="output/debug_inference.pkl",help="path to clean inference output")
+    parser.add_argument("--adv_inference_output_dir", type=str, default="output/debug_adv_inference.pkl")
+    parser.add_argument("--adv_image_dir", type=str, default="output/debug_adv_image.pkl", help="path to adv images")
+    parser.add_argument("--hard-prompt",action="store_true", help='use hard prompt')
 
 
     parser.add_argument(

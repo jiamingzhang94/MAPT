@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="jmzhang@dycpu3.cse.ust.hk:22 password" remoteFilesAllowedToDisappearOnAutoupload="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="jmzhang@dycpu3.cse.ust.hk:22 password">
     <serverData>
       <paths name="dycpu5">
         <serverdata>
@@ -12,7 +12,7 @@
       <paths name="jmzhang@dycpu3.cse.ust.hk:22 password">
         <serverdata>
           <mappings>
-            <mapping deploy="MAPLE" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="MAPT_jh" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
