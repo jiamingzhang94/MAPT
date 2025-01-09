@@ -1,8 +1,8 @@
 DATALOADER:
   TRAIN_X:
-    BATCH_SIZE: 64
+    BATCH_SIZE: 32
   TEST:
-    BATCH_SIZE: 64
+    BATCH_SIZE: 32
   NUM_WORKERS: 8
 
 INPUT:
@@ -13,13 +13,13 @@ INPUT:
   TRANSFORMS: ["random_resized_crop", "random_flip", "normalize"]
 
 OPTIM:
-  NAME: "sgd"
-  LR: 0.0035
-  MAX_EPOCH: 5
+  NAME: "adamw"
+  LR: 0.00035
+  MAX_EPOCH: 20
   LR_SCHEDULER: "cosine"
   WARMUP_EPOCH: 1
   WARMUP_TYPE: "constant"
-  WARMUP_CONS_LR: 1e-5
+  WARMUP_CONS_LR: 1e-6
 
 TRAIN:
   PRINT_FREQ: 20
@@ -30,7 +30,6 @@ MODEL:
 
 TRAINER:
   MAPLE:
-    N_CTX: 2
     CTX_INIT: "a photo of a"
-    PREC: "fp16"
-    PROMPT_DEPTH: 9
+#    PREC: "fp16"
+    PROMPT_DEPTH: 12

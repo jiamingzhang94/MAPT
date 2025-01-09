@@ -1,0 +1,4 @@
+TRAINER:
+  MAPLE:
+    PROMPT_HIDDEN_DIM: 1024  # 文本prompt隐藏维度
+    VISION_HIDDEN_DIM: 2048  # 视觉prompt隐藏维度 

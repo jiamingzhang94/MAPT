@@ -1,5 +1,5 @@
 import torch
-
+import torch.nn.functional as F
 
 class BaseAttack:
     """对抗攻击的基类"""
@@ -9,7 +9,7 @@ class BaseAttack:
         self.steps = steps
         self.alpha = alpha if alpha is not None else eps / steps * 1.5
 
-    def generate(self, model, images, labels, normalize=None):
+    def generate(self, model, images, labels):
         """生成对抗样本的接口方法"""
         raise NotImplementedError
 
@@ -17,9 +17,14 @@ class BaseAttack:
 class PGDAttack(BaseAttack):
     """PGD攻击实现"""
 
-    def generate(self, model, images, labels, normalize=None):
-        if normalize is not None:
-            images = normalize(images)
+    def generate(self, model, images, labels):
+        # Check input sizes
+        if len(images.shape) != 4:
+            raise ValueError(f"Expected images to have 4 dimensions (batch_size, channels, height, width), got shape {images.shape}")
+        if len(labels.shape) != 1:
+            raise ValueError(f"Expected labels to be 1-dimensional (batch_size), got shape {labels.shape}")
+        if images.shape[0] != labels.shape[0]:
+            raise ValueError(f"Batch size mismatch: images has {images.shape[0]} samples but labels has {labels.shape[0]} samples")
 
         delta = torch.zeros_like(images).cuda()
         delta.requires_grad = True
@@ -28,7 +33,9 @@ class PGDAttack(BaseAttack):
             if delta.grad is not None:
                 delta.grad.zero_()
 
-            loss = model(images + delta, labels)
+            logits = model(images + delta, labels)
+            loss = F.cross_entropy(logits, labels)
+
             loss.backward()
 
             grad = delta.grad.detach()
@@ -43,9 +50,7 @@ class PGDAttack(BaseAttack):
 class FGSMAttack(BaseAttack):
     """FGSM攻击实现"""
 
-    def generate(self, model, images, labels, normalize=None):
-        if normalize is not None:
-            images = normalize(images)
+    def generate(self, model, images, labels):
 
         images.requires_grad = True
         loss = model(images, labels)

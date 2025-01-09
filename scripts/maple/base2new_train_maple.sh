@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #cd ../..
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=2
 # custom config
 DATA="/home/dycpu6_8tssd1/jmzhang/datasets/"
 TRAINER=MaPLe

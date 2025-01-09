@@ -13,8 +13,8 @@ from dassl.metrics import compute_accuracy
 from dassl.utils import load_pretrained_weights, load_checkpoint
 from dassl.optim import build_optimizer, build_lr_scheduler
 
-from clip import clip
-from clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
+from clip_m import clip
+from clip_m.simple_tokenizer import SimpleTokenizer as _Tokenizer
 import clip_official
 
 from attack import *
@@ -105,7 +105,7 @@ class MultiModalPromptLearner(nn.Module):
         # These below, related to the shallow prompts
         # Linear layer so that the tokens will project to 512 and will be initialized from 768
         self.proj = nn.Linear(ctx_dim, 768)
-        self.proj.half()
+        # self.proj.half()
         self.ctx = nn.Parameter(ctx_vectors)
         # These below parameters related to the shared prompts
         # Define the compound prompts for the deeper layers
@@ -187,36 +187,56 @@ class CustomCLIP(nn.Module):
         self.prompt_learner = MultiModalPromptLearner(cfg, classnames, clip_model)
         self.tokenized_prompts = self.prompt_learner.tokenized_prompts
         self.image_encoder = clip_model.visual
+        # self.image_encoder = torch.nn.Sequential(
+        #     transforms.Normalize(
+        #         [0.48145466, 0.4578275, 0.40821073],
+        #         [0.26862954, 0.26130258, 0.27577711]),
+        #     clip_model.visual
+        # )
         self.text_encoder = TextEncoder(clip_model)
         self.logit_scale = clip_model.logit_scale
         self.dtype = clip_model.dtype
 
-        # 设置surrogate model
-        self.vanilla_model = VanillaCLIP(
-            cfg.MODEL.BACKBONE.NAME,
-            classnames,
-            cfg.TRAINER.MAPLE.PREC,
-            cfg.DATASET.NAME
-        ).cuda()
+        if cfg.TRAINER.MAPLE.SURROGATE == "vanilla_model":
+            # 设置surrogate model
+            self.vanilla_model = VanillaCLIP(
+                cfg.MODEL.BACKBONE.NAME,
+                classnames,
+                cfg.TRAINER.MAPLE.PREC,
+                cfg.DATASET.NAME
+            ).cuda()
 
-        self.surrogate = (
-            self.vanilla_model if getattr(cfg.TRAINER.MAPLE, "SURROGATE", "vanilla_model") == "vanilla_model"
-            else self)
+            self.surrogate = self.vanilla_model
+        # else:
+        #     self.surrogate = self
 
         # 初始化各种对抗攻击方法
         self._init_attacks(cfg)
 
     def _init_attacks(self, cfg):
-        """初始化所有可能用到的攻击方法"""
-        self.attacks = {
-            'pgd': PGDAttack(
-                eps=getattr(cfg.TRAINER.MAPLE, "EPSILON", 2. / 255),
-                steps=getattr(cfg.TRAINER.MAPLE, "ADV_STEPS", 10)
-            ),
-            'fgsm': FGSMAttack(
-                eps=getattr(cfg.TRAINER.MAPLE, "EPSILON", 2. / 255)
-            )
-            # 可以添加更多攻击方法
+        """初始化攻击方法的默认参数配置"""
+        self.attack_configs = {
+            'pgd': {
+                'eps': getattr(cfg.TRAINER.MAPLE, "EPSILON", 1. / 255),
+                'steps': getattr(cfg.TRAINER.MAPLE, "ADV_STEPS", 10),
+                'alpha': None  # 可选参数
+            },
+            'fgsm': {
+                'eps': getattr(cfg.TRAINER.MAPLE, "EPSILON", 1. / 255)
+            }
+            # 可以添加更多攻击方法的默认配置
+        }
+
+        # 测试时使用的攻击参数配置
+        self.test_attack_configs = {
+            'pgd': {
+                'eps': getattr(cfg.TRAINER.MAPLE, "TEST_EPSILON", 1. / 255),
+                'steps': getattr(cfg.TRAINER.MAPLE, "TEST_STEPS", 100),  # 测试时使用更多步数
+                'alpha': cfg.TRAINER.MAPLE.TEST_EPSILON / 4
+            },
+            'fgsm': {
+                'eps': getattr(cfg.TRAINER.MAPLE, "TEST_EPSILON", 1. / 255)
+            }
         }
 
     def _normalize_image(self, image):
@@ -239,26 +259,55 @@ class CustomCLIP(nn.Module):
         text_features = text_features / text_features.norm(dim=-1, keepdim=True)
         logits = self.logit_scale.exp() * image_features @ text_features.t()
 
-        if self.prompt_learner.training:
-            return F.cross_entropy(logits, label)
+        # if self.prompt_learner.training:
+        #     return F.cross_entropy(logits, label)
 
         return logits
 
-    def generate_adv(self, images, labels, attack_type='pgd'):
+    def generate_adv(self, images, labels, attack_type='pgd', attack_params=None):
         """生成对抗样本"""
-        if attack_type not in self.attacks:
+        if attack_type not in self.attack_configs:
             raise ValueError(f"Unknown attack type: {attack_type}")
 
-        attack = self.attacks[attack_type]
-        return attack.generate(
-            model=self.surrogate,
-            images=images,
-            labels=labels,
-            normalize=self._normalize_image
-        )
+        # 合并默认参数和自定义参数
+        params = self.attack_configs[attack_type].copy()
+        if attack_params is not None:
+            params.update(attack_params)
+
+        # 根据参数创建攻击实例
+        if attack_type == 'pgd':
+            attack = PGDAttack(
+                eps=params['eps'],
+                steps=params['steps'],
+                alpha=params['alpha']
+            )
+        elif attack_type == 'fgsm':
+            attack = FGSMAttack(
+                eps=params['eps']
+            )
+
+        if hasattr(self, 'surrogate') and self.surrogate is not None:
+            images_adv = attack.generate(
+                model=self.surrogate,
+                images=images,
+                labels=labels,
+            )
+        else:
+            images_adv = attack.generate(
+                model=self,
+                images=images,
+                labels=labels,
+            )
+        return images_adv
 
     def forward_adv(self, image, label=None, attack_type='pgd'):
-        image_adv = self.generate_adv(image, label, attack_type)
+        # 测试时使用测试配置
+        image_adv = self.generate_adv(
+            image, 
+            label, 
+            attack_type, 
+            attack_params=self.test_attack_configs[attack_type]
+        )
         # 使用对抗样本进行前向传播
         return self.forward(image_adv, label)
 
@@ -272,7 +321,7 @@ class CustomCLIP(nn.Module):
             dict: 包含每种攻击方法下的logits
         """
         if attack_types is None:
-            attack_types = list(self.attacks.keys())
+            attack_types = list(self.attack_configs.keys())
 
         results = {}
         # 加入清洁样本的结果
@@ -334,9 +383,9 @@ class VanillaCLIP(nn.Module):
         image_features = image_features / image_features.norm(dim=-1, keepdim=True)
         logits = image_features @ self.text_features.t()
 
-        return F.cross_entropy(logits, label)
+        # return F.cross_entropy(logits, label)
 
-        # return logits
+        return logits
 
 
 def _get_clones(module, N):
@@ -369,6 +418,8 @@ class MaPLe(TrainerX):
 
             optim.zero_grad()
             loss.backward()
+            # total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # print(f"Total Gradient Norm (after clipping): {total_norm}")
             optim.step()
 
         if (self.batch_idx + 1) == self.num_batches:
@@ -379,13 +430,17 @@ class MaPLe(TrainerX):
     def _compute_loss(self, model, image, label):
         """计算训练损失（包括对抗训练）"""
         # 标准前向传播
-        loss = model(image, label)
+        logits = model(image, label)
+        loss = F.cross_entropy(logits, label)
 
         # 对抗训练 (训练时只使用PGD)
         if self.adv_train:
             adv_images = model.generate_adv(image, label, attack_type='pgd')
-            adv_loss = model(adv_images, label)
-            loss = (loss + adv_loss) / 2
+            adv_logits = model(adv_images, label)
+            adv_loss = F.cross_entropy(adv_logits, label)
+            loss = loss * (30-self.epoch)/30 + adv_loss * (1 - (30-self.epoch)/30)
+            # loss = (adv_loss + loss)/2
+            # loss = adv_loss
 
         return loss
 
@@ -421,6 +476,12 @@ class MaPLe(TrainerX):
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 enabled.add(name)
+
+                # import torch.nn.init as init
+                # if param.dim() > 1:  # 对于张量维度大于1的参数，使用Xavier初始化
+                #     init.xavier_uniform_(param)
+                # else:  # 对于bias等维度为1的参数，使用常数初始化
+                #     init.constant_(param, 0)
         print(f"Parameters to be updated: {enabled}")
 
         if cfg.MODEL.INIT_WEIGHTS:
@@ -436,10 +497,10 @@ class MaPLe(TrainerX):
 
         # Note that multi-gpu training could be slow because CLIP's size is
         # big, which slows down the copy operation in DataParallel
-        device_count = torch.cuda.device_count()
-        if device_count > 1:
-            print(f"Multiple GPUs detected (n_gpus={device_count}), use all of them!")
-            self.model = nn.DataParallel(self.model)
+        # device_count = torch.cuda.device_count()
+        # if device_count > 1:
+        #     print(f"Multiple GPUs detected (n_gpus={device_count}), use all of them!")
+        #     self.model = nn.DataParallel(self.model)
 
     # def forward_backward(self, batch):
     #     image, label = self.parse_batch_train(batch)

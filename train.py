@@ -89,47 +89,27 @@ def extend_cfg(cfg):
     """
     from yacs.config import CfgNode as CN
 
-    cfg.TRAINER.COOP = CN()
-    cfg.TRAINER.COOP.N_CTX = 16  # number of context vectors
-    cfg.TRAINER.COOP.CSC = False  # class-specific context
-    cfg.TRAINER.COOP.CTX_INIT = ""  # initialization words
-    cfg.TRAINER.COOP.PREC = "fp16"  # fp16, fp32, amp
-    cfg.TRAINER.COOP.CLASS_TOKEN_POSITION = "end"  # 'middle' or 'end' or 'front'
-
-    cfg.TRAINER.COCOOP = CN()
-    cfg.TRAINER.COCOOP.N_CTX = 16  # number of context vectors
-    cfg.TRAINER.COCOOP.CTX_INIT = ""  # initialization words
-    cfg.TRAINER.COCOOP.PREC = "fp16"  # fp16, fp32, amp
-
     # Config for MaPLe
     cfg.TRAINER.MAPLE = CN()
-    cfg.TRAINER.MAPLE.N_CTX = 2  # number of context vectors
+    cfg.TRAINER.MAPLE.N_CTX = 16  # number of context vectors
     cfg.TRAINER.MAPLE.CTX_INIT = "a photo of a"  # initialization words
-    cfg.TRAINER.MAPLE.PREC = "fp16"  # fp16, fp32, amp
+    # cfg.TRAINER.MAPLE.CTX_INIT = ""  # initialization words
+    cfg.TRAINER.MAPLE.PREC = "fp32"  # fp16, fp32, amp
     cfg.TRAINER.MAPLE.PROMPT_DEPTH = args.depth # Max 12, minimum 0, for 1 it will act as shallow MaPLe (J=1)
     cfg.TRAINER.MAPLE.ADV_TRAIN = args.adv_train
     cfg.DATASET.SUBSAMPLE_CLASSES = "all"  # all, base or new
-    cfg.TRAINER.MAPLE.EPSILON = args.eps
+    cfg.TRAINER.MAPLE.EPSILON = 1 / 255
+    cfg.TRAINER.MAPLE.TEST_EPSILON = 1. / 255
+    cfg.DATASET.NUM_SHOTS = args.num_shots
+    cfg.TRAINER.MAPLE.ADV_STEPS = 3
+    cfg.TRAINER.MAPLE.TEST_STEPS = 10
+    cfg.TRAINER.MAPLE.SURROGATE = "self"
+
+    # cfg.TRAINER.MAPLE.PROMPT_HIDDEN_DIM = 1024
+    # cfg.TRAINER.MAPLE.VISION_HIDDEN_DIM = 2048
 
 
-    # Config for independent Vision Language prompting (independent-vlp)
-    cfg.TRAINER.IVLP = CN()
-    cfg.TRAINER.IVLP.N_CTX_VISION = 2  # number of context vectors at the vision branch
-    cfg.TRAINER.IVLP.N_CTX_TEXT = 2  # number of context vectors at the language branch
-    cfg.TRAINER.IVLP.CTX_INIT = "a photo of a"  # initialization words (only for language prompts)
-    cfg.TRAINER.IVLP.PREC = "fp16"  # fp16, fp32, amp
-    # If both variables below are set to 0, 0, will the config will degenerate to COOP model
-    cfg.TRAINER.IVLP.PROMPT_DEPTH_VISION = 9 # Max 12, minimum 0, for 0 it will act as shallow MaPLe (J=1)
-    cfg.TRAINER.IVLP.PROMPT_DEPTH_TEXT = 9  # Max 12, minimum 0, for 0 it will act as shallow MaPLe (J=1)
-    cfg.DATASET.SUBSAMPLE_CLASSES = "all"  # all, base or new
 
-    # Config for only vision side prompting
-    cfg.TRAINER.VPT = CN()
-    cfg.TRAINER.VPT.N_CTX_VISION = 2  # number of context vectors at the vision branch
-    cfg.TRAINER.VPT.CTX_INIT = "a photo of a"  # initialization words
-    cfg.TRAINER.VPT.PREC = "fp16"  # fp16, fp32, amp
-    cfg.TRAINER.VPT.PROMPT_DEPTH_VISION = 1  # if set to 1, will represent shallow vision prompting only
-    cfg.DATASET.SUBSAMPLE_CLASSES = "all"  # all, base or new
 
 
 def setup_cfg(args):
@@ -160,16 +140,20 @@ def main(args):
     if cfg.SEED >= 0:
         print("Setting fixed seed: {}".format(cfg.SEED))
         set_random_seed(cfg.SEED)
-    setup_logger(cfg.OUTPUT_DIR)
+    # setup_logger(cfg.OUTPUT_DIR)
 
     if torch.cuda.is_available() and cfg.USE_CUDA:
         torch.backends.cudnn.benchmark = True
 
-    print_args(args, cfg)
-    print("Collecting env info ...")
-    print("** System info **\n{}\n".format(collect_env_info()))
+    # print_args(args, cfg)
+    # print("Collecting env info ...")
+    # print("** System info **\n{}\n".format(collect_env_info()))
 
     trainer = build_trainer(cfg)
+
+    # if args.generate:
+    #     trainer.load_model(args.model_dir, epoch=args.load_epoch)
+    #     trainer.generate()
 
     if args.eval_only:
         trainer.load_model(args.model_dir, epoch=args.load_epoch)
@@ -213,14 +197,16 @@ if __name__ == "__main__":
         default="configs/datasets/oxford_flowers.yaml",
         help="path to config file for dataset setup",
     )
+    # parser.add_argument("--generate", default=False)
     parser.add_argument("--trainer", type=str, default="MaPLe", help="name of trainer")
     parser.add_argument("--backbone", type=str, default="", help="name of CNN backbone")
     parser.add_argument("--head", type=str, default="", help="name of head")
     parser.add_argument("--eval-only", default=False)
     parser.add_argument("--adv-train", default=True)
-    parser.add_argument("--surrogate", type=str, default="vanilla_model")
-    parser.add_argument("--depth", type=int, default=1, help="depth")
-    parser.add_argument("--eps", type=float, default=8/255.)
+    parser.add_argument("--surrogate", type=str, default="vanilla")
+    parser.add_argument("--depth", type=int, default=12, help="depth")
+    parser.add_argument("--eps", type=float, default=4/255.)
+    parser.add_argument("--num_shots", type=int, default=16)
 
 
 
