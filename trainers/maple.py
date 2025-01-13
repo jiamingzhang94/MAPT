@@ -247,21 +247,40 @@ class CustomCLIP(nn.Module):
         )
         return normalize(image)
 
-    def forward(self, image, label=None):
-        """标准前向传播"""
+    def forward(self, image, label=None, return_features=False):
         image = self._normalize_image(image)
-
+        features_dict = {}
+        
         prompts, shared_ctx, deep_compound_prompts_text, deep_compound_prompts_vision = self.prompt_learner()
+        
+        # 获取文本特征
         text_features = self.text_encoder(prompts, self.tokenized_prompts, deep_compound_prompts_text)
-        image_features = self.image_encoder(image.type(self.dtype), shared_ctx, deep_compound_prompts_vision)
-
+        
+        # 获取图像特征和中间特征
+        if return_features:
+            image_features, layer_features = self.image_encoder(
+                image.type(self.dtype), 
+                shared_ctx,
+                deep_compound_prompts_vision,
+                return_features=True
+            )
+            features_dict.update(layer_features)
+        else:
+            image_features = self.image_encoder(
+                image.type(self.dtype), 
+                shared_ctx,
+                deep_compound_prompts_vision
+            )
+        
+        # 特征归一化
         image_features = image_features / image_features.norm(dim=-1, keepdim=True)
         text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        
+        # 计算logits
         logits = self.logit_scale.exp() * image_features @ text_features.t()
-
-        # if self.prompt_learner.training:
-        #     return F.cross_entropy(logits, label)
-
+        
+        if return_features:
+            return logits, features_dict
         return logits
 
     def generate_adv(self, images, labels, attack_type='pgd', attack_params=None):
@@ -418,7 +437,7 @@ class MaPLe(TrainerX):
 
             optim.zero_grad()
             loss.backward()
-            # total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
             # print(f"Total Gradient Norm (after clipping): {total_norm}")
             optim.step()
 
@@ -428,20 +447,42 @@ class MaPLe(TrainerX):
         return {"loss": loss.item()}
 
     def _compute_loss(self, model, image, label):
-        """计算训练损失（包括对抗训练）"""
         # 标准前向传播
-        logits = model(image, label)
+        logits, clean_features = model(image, label, return_features=True)
         loss = F.cross_entropy(logits, label)
-
-        # 对抗训练 (训练时只使用PGD)
+        
+        # 对抗训练
         if self.adv_train:
             adv_images = model.generate_adv(image, label, attack_type='pgd')
-            adv_logits = model(adv_images, label)
+            adv_logits, adv_features = model(adv_images, label, return_features=True)
             adv_loss = F.cross_entropy(adv_logits, label)
-            loss = loss * (30-self.epoch)/30 + adv_loss * (1 - (30-self.epoch)/30)
-            # loss = (adv_loss + loss)/2
-            # loss = adv_loss
+            
+            # 计算AFR特征一致性损失
+            consistency_loss = 0
+            for key in clean_features:
+                if key.startswith('afr_layer_'):
+                    clean_feat = clean_features[key]
+                    adv_feat = adv_features[key]
+                    
+                    # 归一化后计算MSE
+                    clean_feat = clean_feat / (clean_feat.norm(dim=-1, keepdim=True) + 1e-6)
+                    adv_feat = adv_feat / (adv_feat.norm(dim=-1, keepdim=True) + 1e-6)
+                    layer_loss = F.mse_loss(clean_feat, adv_feat)
+                    consistency_loss += layer_loss
+            
+            # loss_total = loss + adv_loss * 0.1 + consistency_loss * 1000
+            # loss_total = loss * (30 - self.epoch) / 30 + \
+            #        adv_loss * (1 - (30 - self.epoch) / 30) * 0.1 + \
+            #        consistency_loss * (1 - (30 - self.epoch) / 30) * 1000
 
+            loss_total = loss
+
+            # print(f"Clean loss: {loss.item()}")
+            # print(f"Adv loss: {adv_loss.item()}")
+            # print(f"Consistency loss: {consistency_loss.item()}")
+
+            return loss_total
+        
         return loss
 
     def build_model(self):
@@ -465,8 +506,12 @@ class MaPLe(TrainerX):
 
         for name, param in self.model.named_parameters():
             if name_to_update not in name:
-                # Make sure that VPT prompts are updated
-                if "VPT" in name:
+                # 只更新AFR模块的参数
+                if any(key in name for key in [
+                    "afr.norm1", "afr.norm2", 
+                    "afr.q_proj", "afr.k_proj", "afr.v_proj", 
+                    "afr.proj_out", "afr.gate"
+                ]):
                     param.requires_grad_(True)
                 else:
                     param.requires_grad_(False)

@@ -101,10 +101,11 @@ def extend_cfg(cfg):
     cfg.TRAINER.MAPLE.EPSILON = 1 / 255
     cfg.TRAINER.MAPLE.TEST_EPSILON = 1. / 255
     cfg.DATASET.NUM_SHOTS = args.num_shots
-    cfg.TRAINER.MAPLE.ADV_STEPS = 3
+    cfg.TRAINER.MAPLE.ADV_STEPS = 1
     cfg.TRAINER.MAPLE.TEST_STEPS = 10
     cfg.TRAINER.MAPLE.SURROGATE = "self"
 
+    cfg.TRAINER.MAPLE.LAMBDA_CONSIST = 0.1
     # cfg.TRAINER.MAPLE.PROMPT_HIDDEN_DIM = 1024
     # cfg.TRAINER.MAPLE.VISION_HIDDEN_DIM = 2048
 
@@ -202,7 +203,7 @@ if __name__ == "__main__":
     parser.add_argument("--backbone", type=str, default="", help="name of CNN backbone")
     parser.add_argument("--head", type=str, default="", help="name of head")
     parser.add_argument("--eval-only", default=False)
-    parser.add_argument("--adv-train", default=True)
+    parser.add_argument("--adv-train", default=False)
     parser.add_argument("--surrogate", type=str, default="vanilla")
     parser.add_argument("--depth", type=int, default=12, help="depth")
     parser.add_argument("--eps", type=float, default=4/255.)
