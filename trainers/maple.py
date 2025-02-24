@@ -105,8 +105,9 @@ class MultiModalPromptLearner(nn.Module):
         # These below, related to the shallow prompts
         # Linear layer so that the tokens will project to 512 and will be initialized from 768
         self.proj = nn.Linear(ctx_dim, 768)
-        # self.proj.half()
         self.ctx = nn.Parameter(ctx_vectors)
+        if self.ctx.dtype == torch.float16:
+            self.proj.half()
         # These below parameters related to the shared prompts
         # Define the compound prompts for the deeper layers
 
@@ -448,34 +449,38 @@ class MaPLe(TrainerX):
 
     def _compute_loss(self, model, image, label):
         # 标准前向传播
-        logits, clean_features = model(image, label, return_features=True)
+        # logits, clean_features = model(image, label, return_features=False)
+        logits = model(image, label, return_features=False)
         loss = F.cross_entropy(logits, label)
         
         # 对抗训练
         if self.adv_train:
             adv_images = model.generate_adv(image, label, attack_type='pgd')
-            adv_logits, adv_features = model(adv_images, label, return_features=True)
+            # adv_logits, adv_features = model(adv_images, label, return_features=True)
+            adv_logits = model(adv_images, label, return_features=False)
             adv_loss = F.cross_entropy(adv_logits, label)
             
             # 计算AFR特征一致性损失
-            consistency_loss = 0
-            for key in clean_features:
-                if key.startswith('afr_layer_'):
-                    clean_feat = clean_features[key]
-                    adv_feat = adv_features[key]
-                    
-                    # 归一化后计算MSE
-                    clean_feat = clean_feat / (clean_feat.norm(dim=-1, keepdim=True) + 1e-6)
-                    adv_feat = adv_feat / (adv_feat.norm(dim=-1, keepdim=True) + 1e-6)
-                    layer_loss = F.mse_loss(clean_feat, adv_feat)
-                    consistency_loss += layer_loss
+            # consistency_loss = 0
+            # for key in clean_features:
+            #     if key.startswith('afr_layer_'):
+            #         clean_feat = clean_features[key]
+            #         adv_feat = adv_features[key]
+            #
+            #         # 归一化后计算MSE
+            #         clean_feat = clean_feat / (clean_feat.norm(dim=-1, keepdim=True) + 1e-6)
+            #         adv_feat = adv_feat / (adv_feat.norm(dim=-1, keepdim=True) + 1e-6)
+            #         layer_loss = F.mse_loss(clean_feat, adv_feat)
+            #         consistency_loss += layer_loss
             
             # loss_total = loss + adv_loss * 0.1 + consistency_loss * 1000
             # loss_total = loss * (30 - self.epoch) / 30 + \
             #        adv_loss * (1 - (30 - self.epoch) / 30) * 0.1 + \
             #        consistency_loss * (1 - (30 - self.epoch) / 30) * 1000
 
-            loss_total = loss
+            loss_total = loss * 0.5 + adv_loss * 0.5
+            # loss_total = loss * (self.max_epoch - self.epoch) / self.max_epoch + \
+            #        adv_loss * (1 - (self.max_epoch - self.epoch) / self.max_epoch)
 
             # print(f"Clean loss: {loss.item()}")
             # print(f"Adv loss: {adv_loss.item()}")
@@ -507,11 +512,12 @@ class MaPLe(TrainerX):
         for name, param in self.model.named_parameters():
             if name_to_update not in name:
                 # 只更新AFR模块的参数
-                if any(key in name for key in [
-                    "afr.norm1", "afr.norm2", 
-                    "afr.q_proj", "afr.k_proj", "afr.v_proj", 
-                    "afr.proj_out", "afr.gate"
-                ]):
+                # if any(key in name for key in [
+                #     "afr.norm1", "afr.norm2",
+                #     "afr.q_proj", "afr.k_proj", "afr.v_proj",
+                #     "afr.proj_out", "afr.gate"
+                # ]):
+                if "token_refiner" in name or "prompt_fusion" in name:
                     param.requires_grad_(True)
                 else:
                     param.requires_grad_(False)

@@ -23,12 +23,12 @@ import datasets.imagenetv2
 import datasets.imagenet_a
 import datasets.imagenet_r
 
-import trainers.coop
-import trainers.cocoop
-import trainers.zsclip
+# import trainers.coop
+# import trainers.cocoop
+# import trainers.zsclip
 import trainers.maple
-import trainers.independentVL
-import trainers.vpt
+# import trainers.independentVL
+# import trainers.vpt
 
 def print_args(args, cfg):
     print("***************")
@@ -96,13 +96,13 @@ def extend_cfg(cfg):
     # cfg.TRAINER.MAPLE.CTX_INIT = ""  # initialization words
     cfg.TRAINER.MAPLE.PREC = "fp32"  # fp16, fp32, amp
     cfg.TRAINER.MAPLE.PROMPT_DEPTH = args.depth # Max 12, minimum 0, for 1 it will act as shallow MaPLe (J=1)
-    cfg.TRAINER.MAPLE.ADV_TRAIN = args.adv_train
+    cfg.TRAINER.MAPLE.ADV_TRAIN = True
     cfg.DATASET.SUBSAMPLE_CLASSES = "all"  # all, base or new
     cfg.TRAINER.MAPLE.EPSILON = 1 / 255
     cfg.TRAINER.MAPLE.TEST_EPSILON = 1. / 255
     cfg.DATASET.NUM_SHOTS = args.num_shots
-    cfg.TRAINER.MAPLE.ADV_STEPS = 1
-    cfg.TRAINER.MAPLE.TEST_STEPS = 10
+    cfg.TRAINER.MAPLE.ADV_STEPS = 5
+    cfg.TRAINER.MAPLE.TEST_STEPS = 100
     cfg.TRAINER.MAPLE.SURROGATE = "self"
 
     cfg.TRAINER.MAPLE.LAMBDA_CONSIST = 0.1
@@ -195,7 +195,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset-config-file",
         type=str,
-        default="configs/datasets/oxford_flowers.yaml",
+        # default="configs/datasets/oxford_flowers.yaml",
+        default="configs/datasets/imagenet.yaml",
         help="path to config file for dataset setup",
     )
     # parser.add_argument("--generate", default=False)
@@ -206,7 +207,7 @@ if __name__ == "__main__":
     parser.add_argument("--adv-train", default=False)
     parser.add_argument("--surrogate", type=str, default="vanilla")
     parser.add_argument("--depth", type=int, default=12, help="depth")
-    parser.add_argument("--eps", type=float, default=4/255.)
+    parser.add_argument("--eps", type=float, default=1/255.)
     parser.add_argument("--num_shots", type=int, default=16)
 
 
