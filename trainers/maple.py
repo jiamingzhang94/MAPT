@@ -114,7 +114,7 @@ class MultiModalPromptLearner(nn.Module):
         # Minimum can be 1, which defaults to shallow MaPLe
         # compound prompts
         self.compound_prompts_text = nn.ParameterList([nn.Parameter(torch.empty(n_ctx, 512))
-                                                      for _ in range(self.compound_prompts_depth - 1)])
+                                                       for _ in range(self.compound_prompts_depth - 1)])
         for single_para in self.compound_prompts_text:
             nn.init.normal_(single_para, std=0.02)
         # Also make corresponding projection layers, for each prompt
@@ -178,7 +178,8 @@ class MultiModalPromptLearner(nn.Module):
             visual_deep_prompts.append(layer(self.compound_prompts_text[index]))
         # Now the other way around
         # We will project the textual prompts from 512 to 768
-        return prompts, self.proj(self.ctx), self.compound_prompts_text, visual_deep_prompts   # pass here original, as for visual 768 is required
+        return prompts, self.proj(
+            self.ctx), self.compound_prompts_text, visual_deep_prompts  # pass here original, as for visual 768 is required
 
 
 class CustomCLIP(nn.Module):
@@ -251,16 +252,16 @@ class CustomCLIP(nn.Module):
     def forward(self, image, label=None, return_features=False):
         image = self._normalize_image(image)
         features_dict = {}
-        
+
         prompts, shared_ctx, deep_compound_prompts_text, deep_compound_prompts_vision = self.prompt_learner()
-        
+
         # 获取文本特征
         text_features = self.text_encoder(prompts, self.tokenized_prompts, deep_compound_prompts_text)
-        
+
         # 获取图像特征和中间特征
         if return_features:
             image_features, layer_features = self.image_encoder(
-                image.type(self.dtype), 
+                image.type(self.dtype),
                 shared_ctx,
                 deep_compound_prompts_vision,
                 return_features=True
@@ -268,18 +269,18 @@ class CustomCLIP(nn.Module):
             features_dict.update(layer_features)
         else:
             image_features = self.image_encoder(
-                image.type(self.dtype), 
+                image.type(self.dtype),
                 shared_ctx,
                 deep_compound_prompts_vision
             )
-        
+
         # 特征归一化
         image_features = image_features / image_features.norm(dim=-1, keepdim=True)
         text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-        
+
         # 计算logits
         logits = self.logit_scale.exp() * image_features @ text_features.t()
-        
+
         if return_features:
             return logits, features_dict
         return logits
@@ -323,9 +324,9 @@ class CustomCLIP(nn.Module):
     def forward_adv(self, image, label=None, attack_type='pgd'):
         # 测试时使用测试配置
         image_adv = self.generate_adv(
-            image, 
-            label, 
-            attack_type, 
+            image,
+            label,
+            attack_type,
             attack_params=self.test_attack_configs[attack_type]
         )
         # 使用对抗样本进行前向传播
@@ -417,6 +418,7 @@ class MaPLe(TrainerX):
     def check_cfg(self, cfg):
         assert cfg.TRAINER.MAPLE.PREC in ["fp16", "fp32", "amp"]
         self.adv_train = getattr(cfg.TRAINER.MAPLE, "ADV_TRAIN", True)
+        self.feature = cfg.TRAINER.MAPLE.FEATURE_CONSTRAIN
 
     def forward_backward(self, batch):
         image, label = self.parse_batch_train(batch)
@@ -449,45 +451,74 @@ class MaPLe(TrainerX):
 
     def _compute_loss(self, model, image, label):
         # 标准前向传播
-        # logits, clean_features = model(image, label, return_features=False)
-        logits = model(image, label, return_features=False)
+        if self.feature:
+            logits, clean_features = model(image, label, return_features=self.feature)
+        else:
+            logits = model(image, label, return_features=self.feature)
+        # logits = model(image, label, return_features=False)
         loss = F.cross_entropy(logits, label)
-        
+
         # 对抗训练
         if self.adv_train:
             adv_images = model.generate_adv(image, label, attack_type='pgd')
-            # adv_logits, adv_features = model(adv_images, label, return_features=True)
-            adv_logits = model(adv_images, label, return_features=False)
+            if self.feature:
+                adv_logits, adv_features = model(adv_images, label, return_features=self.feature)
+            else:
+                adv_logits = model(adv_images, label, return_features=self.feature)
+            # adv_logits = model(adv_images, label, return_features=False)
             adv_loss = F.cross_entropy(adv_logits, label)
-            
-            # 计算AFR特征一致性损失
-            # consistency_loss = 0
-            # for key in clean_features:
-            #     if key.startswith('afr_layer_'):
-            #         clean_feat = clean_features[key]
-            #         adv_feat = adv_features[key]
-            #
-            #         # 归一化后计算MSE
-            #         clean_feat = clean_feat / (clean_feat.norm(dim=-1, keepdim=True) + 1e-6)
-            #         adv_feat = adv_feat / (adv_feat.norm(dim=-1, keepdim=True) + 1e-6)
-            #         layer_loss = F.mse_loss(clean_feat, adv_feat)
-            #         consistency_loss += layer_loss
-            
-            # loss_total = loss + adv_loss * 0.1 + consistency_loss * 1000
+
+            if self.feature:
+                # 计算特征一致性损失
+                consistency_loss = 0
+                for key in clean_features:
+                    if key.startswith('refiner'):
+                        clean_feat = clean_features[key]
+                        adv_feat = adv_features[key]
+
+                        # 归一化后计算MSE
+                        batch_size, D1, D2 = clean_feat.size()
+                        clean_feat_reshaped = clean_feat.reshape(batch_size, D1 * D2) + 1e-8
+                        adv_feat_reshaped = adv_feat.reshape(batch_size, D1 * D2) + 1e-8
+
+                        clean_feat_normalized = clean_feat_reshaped / (clean_feat_reshaped.norm(dim=1, keepdim=True))
+                        adv_feat_normalized = adv_feat_reshaped / (adv_feat_reshaped.norm(dim=1, keepdim=True))
+                        # layer_loss = F.mse_loss(clean_feat_normalized, adv_feat_normalized)
+
+                        # clean_feat_normalized = clean_feat_reshaped / (clean_feat_reshaped.norm(dim=1, keepdim=True))
+                        # adv_feat_normalized = adv_feat_reshaped / (adv_feat_reshaped.norm(dim=1, keepdim=True))
+                        cosine_similarity = F.cosine_similarity(clean_feat_normalized, adv_feat_normalized, dim=1)
+                        #
+                        # # 计算相似度损失
+                        # # 如果你希望最小化相似度损失，可以使用1 - cosine_similarity
+                        layer_loss = 1 - cosine_similarity.mean()
+
+                        # log_adv_prob = F.log_softmax(adv_feat_reshaped, dim=1)
+                        # clean_prob = F.softmax(clean_feat_reshaped, dim=1)
+                        # layer_loss = F.kl_div(log_adv_prob, clean_prob, reduction='batchmean', log_target=False)
+
+                        # clean_feat = clean_feat / (clean_feat.norm(dim=(1, 2), keepdim=True) + 1e-6)
+                        # adv_feat = adv_feat / (adv_feat.norm(dim=(1, 2), keepdim=True) + 1e-6)
+                        # layer_loss = F.mse_loss(clean_feat, adv_feat)
+                        consistency_loss += layer_loss
+            else:
+                consistency_loss = 0
+            # loss_total = loss + adv_loss * 1.0 + consistency_loss * 50000
             # loss_total = loss * (30 - self.epoch) / 30 + \
             #        adv_loss * (1 - (30 - self.epoch) / 30) * 0.1 + \
             #        consistency_loss * (1 - (30 - self.epoch) / 30) * 1000
 
-            loss_total = loss * 0.5 + adv_loss * 0.5
-            # loss_total = loss * (self.max_epoch - self.epoch) / self.max_epoch + \
-            #        adv_loss * (1 - (self.max_epoch - self.epoch) / self.max_epoch)
+            # loss_total = loss * 0.5 + adv_loss * 0.5
+            loss_total = loss * (self.max_epoch - self.epoch) / self.max_epoch + \
+                         adv_loss * (1 - (self.max_epoch - self.epoch) / self.max_epoch) + \
+                         consistency_loss * 1 * (1 - (self.max_epoch - self.epoch) / self.max_epoch)
 
             # print(f"Clean loss: {loss.item()}")
             # print(f"Adv loss: {adv_loss.item()}")
-            # print(f"Consistency loss: {consistency_loss.item()}")
+            # print(f"Consistency loss: {consistency_loss}")
 
             return loss_total
-        
+
         return loss
 
     def build_model(self):

@@ -131,6 +131,21 @@ class TrainerBase:
             if self._scheds[name] is not None:
                 sched_dict = self._scheds[name].state_dict()
 
+            # Generate model name based on parameters if not provided
+            if not model_name and hasattr(self, 'cfg') and hasattr(self.cfg, 'TRAINER') and hasattr(self.cfg.TRAINER, 'MAPLE'):
+                # Format epsilon as a string without trailing zeros
+                eps_str = str(self.cfg.TRAINER.MAPLE.EPSILON).rstrip('0').rstrip('.') if self.cfg.TRAINER.MAPLE.EPSILON % 1 == 0 else str(self.cfg.TRAINER.MAPLE.EPSILON)
+                
+                # Include more parameters for better ablation study organization
+                depth_str = str(self.cfg.TRAINER.MAPLE.PROMPT_DEPTH)
+                shots_str = str(self.cfg.DATASET.NUM_SHOTS) if hasattr(self.cfg.DATASET, 'NUM_SHOTS') else "default"
+                
+                # Create model name with comprehensive parameter information
+                model_name = f"model_eps{eps_str}_steps{self.cfg.TRAINER.MAPLE.ADV_STEPS}_depth{depth_str}_shots{shots_str}.pth.tar"
+            elif not model_name:
+                # Fallback to epoch-based naming if parameters are not available
+                model_name = f"model.pth.tar-{epoch}"
+
             save_checkpoint(
                 {
                     "state_dict": model_dict,
@@ -169,7 +184,7 @@ class TrainerBase:
 
         return start_epoch
 
-    def load_model(self, directory, epoch=None):
+    def load_model(self, directory, epoch=None, model_name=None):
         if not directory:
             print(
                 "Note that load_model() is skipped as no pretrained "
@@ -180,10 +195,15 @@ class TrainerBase:
         names = self.get_model_names()
 
         # By default, the best model is loaded
-        model_file = "model-best.pth.tar"
-
-        if epoch is not None:
+        if model_name is not None:
+            # Use the provided model name directly
+            model_file = model_name
+        elif epoch is not None:
+            # Use epoch-based naming if epoch is provided
             model_file = "model.pth.tar-" + str(epoch)
+        else:
+            # Default to best model
+            model_file = "model-best.pth.tar"
 
         for name in names:
             model_path = osp.join(directory, name, model_file)
@@ -428,6 +448,19 @@ class SimpleTrainer(TrainerBase):
             if self.cfg.TRAIN.CHECKPOINT_FREQ > 0 else False
         )
 
+        # Generate model name based on parameters
+        model_name = ""
+        if hasattr(self.cfg, 'TRAINER') and hasattr(self.cfg.TRAINER, 'MAPLE'):
+            # Format epsilon as a string without trailing zeros
+            eps_str = str(self.cfg.TRAINER.MAPLE.EPSILON).rstrip('0').rstrip('.') if self.cfg.TRAINER.MAPLE.EPSILON % 1 == 0 else str(self.cfg.TRAINER.MAPLE.EPSILON)
+            
+            # Include more parameters for better ablation study organization
+            depth_str = str(self.cfg.TRAINER.MAPLE.PROMPT_DEPTH)
+            shots_str = str(self.cfg.DATASET.NUM_SHOTS) if hasattr(self.cfg.DATASET, 'NUM_SHOTS') else "default"
+            
+            # Create model name with comprehensive parameter information
+            model_name = f"model_eps{eps_str}_steps{self.cfg.TRAINER.MAPLE.ADV_STEPS}_depth{depth_str}_shots{shots_str}.pth.tar"
+
         if do_test and self.cfg.TEST.FINAL_MODEL == "best_val":
             curr_result = self.test(split="val")
             is_best = curr_result > self.best_result
@@ -441,7 +474,7 @@ class SimpleTrainer(TrainerBase):
                 )
 
         if meet_checkpoint_freq or last_epoch:
-            self.save_model(self.epoch, self.output_dir)
+            self.save_model(self.epoch, self.output_dir, model_name=model_name)
 
     def test_adv(self, surrogate, split=None):
         """A generic testing pipeline."""

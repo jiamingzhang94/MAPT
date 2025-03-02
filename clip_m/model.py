@@ -173,6 +173,10 @@ class TokenRefiner(nn.Module):
         self.refiner = nn.Sequential(
             nn.Linear(d_model, hidden_dim),
             nn.ReLU(inplace=True),
+            # nn.Linear(hidden_dim, hidden_dim*2),
+            # nn.ReLU(inplace=True),
+            # nn.Linear(hidden_dim*2, hidden_dim),
+            # nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, d_model)
         )
 
@@ -205,74 +209,6 @@ class ResidualAttentionBlock(nn.Module):
         return x
 
 
-class ResidualAttentionBlock_IVLP(nn.Module):
-    def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None, add_prompt=False,
-                 text_layer=False, i=0, design_details=None):
-        super().__init__()
-
-        self.attn = nn.MultiheadAttention(d_model, n_head)
-        self.ln_1 = LayerNorm(d_model)
-        self.mlp = nn.Sequential(OrderedDict([
-            ("c_fc", nn.Linear(d_model, d_model * 4)),
-            ("gelu", QuickGELU()),
-            ("c_proj", nn.Linear(d_model * 4, d_model))
-        ]))
-        self.ln_2 = LayerNorm(d_model)
-        # Only add learnable tokens if flag is set True
-        # For the first iteration i, we should not add the learnable parameters
-        # as it is already been taken care of in the very start, for both text
-        # and the visual branch
-        self.text_layer = text_layer
-        self.attn_mask = attn_mask
-        if i != 0:
-            self.add_prompt = add_prompt
-            if self.add_prompt:
-                if self.text_layer:
-                    self.n_ctx_text = design_details["language_ctx"]  # hyperparameter
-                    ctx_vectors = torch.empty(self.n_ctx_text, d_model)
-                else:
-                    self.n_ctx_visual = design_details["vision_ctx"]  # hyperparameter
-                    ctx_vectors = torch.empty(self.n_ctx_visual, d_model)
-                # Code snippet for per layer visual prompts
-                nn.init.normal_(ctx_vectors, std=0.02)
-                self.VPT_shallow = nn.Parameter(ctx_vectors)
-        else:
-            self.add_prompt = False
-
-    def attention(self, x: torch.Tensor):
-        self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
-        return self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)[0]
-
-    def forward(self, x: torch.Tensor):
-        # Will need to append the learnable tokens for this layer here
-        # Check if flag was set for this layer or not
-        if self.add_prompt:
-            # Also see if this is textual transformer layer or not
-            if not self.text_layer:
-                # Remove the outputs produced by learnable tokens of previous layer
-                prefix = x[0:x.shape[0] - self.n_ctx_visual, :, :]
-                # Create/configure learnable tokens of this layer
-                visual_context = self.VPT_shallow.expand(x.shape[1], -1, -1).permute(1, 0, 2).half()
-                # Add the learnable tokens of this layer with the input, by replacing the previous
-                # layer learnable tokens
-                x = torch.cat([prefix, visual_context], dim=0)
-            else:
-                # Appending the learnable tokens in different way
-                # x -> [77, NCLS, DIM]
-                # First remove the learnable tokens from previous layer
-                prefix = x[:1, :, :]
-                suffix = x[1 + self.n_ctx_text:, :, :]
-                # Create/configure learnable tokens of this layer
-                textual_context = self.VPT_shallow.expand(x.shape[1], -1, -1).permute(1, 0, 2).half()
-                # Add the learnable tokens of this layer with the input, replaced by previous
-                # layer learnable tokens
-                x = torch.cat([prefix, textual_context, suffix], dim=0)
-
-        x = x + self.attention(self.ln_1(x))
-        x = x + self.mlp(self.ln_2(x))
-        return x
-
-
 class ResidualAttentionBlock_MaPLe(nn.Module):
     def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None, design_details=None,
                  text_layer=False, i=0):
@@ -295,7 +231,8 @@ class ResidualAttentionBlock_MaPLe(nn.Module):
 
         # 关键：新增一个 token_refiner，用于修正原生 token
         # hidden_factor=2 只是示例，实际可调大一些。
-        self.token_refiner = TokenRefiner(d_model, hidden_factor=2)
+        self.token_refiner = TokenRefiner(d_model)
+        self.features_dict = {}
 
     def attention(self, x: torch.Tensor):
         """
@@ -328,7 +265,7 @@ class ResidualAttentionBlock_MaPLe(nn.Module):
 
                         # (1) 拆分 prefix (原生 token) 和旧 prompt
                         prefix = x[0 : x.shape[0] - self.compound_prompt_nctx, :, :]
-                        old_prompt = x[x.shape[0] - self.compound_prompt_nctx : x.shape[0], :, :]
+                        # old_prompt = x[x.shape[0] - self.compound_prompt_nctx : x.shape[0], :, :]
 
                         # (2) 用可学习模块修正 prefix
                         #    prefix_refined = prefix + f(prefix)
@@ -337,7 +274,9 @@ class ResidualAttentionBlock_MaPLe(nn.Module):
                         # (3) 用新的 prompt 替换旧 prompt
                         visual_context = compound_prompts_deeper[counter]
                         # [n_ctx, d_model] -> [n_ctx, N, d_model]
-                        visual_context = visual_context.expand(prefix.shape[1], -1, -1).permute(1, 0, 2).half()
+                        # visual_context = visual_context.expand(prefix.shape[1], -1, -1).permute(1, 0, 2).half()
+                        visual_context = visual_context.expand(prefix.shape[1], -1, -1).permute(1, 0, 2)
+                        visual_context = visual_context.to(x.dtype)
 
                         # (4) 重新拼接
                         x = torch.cat([prefix_refined, visual_context], dim=0)
@@ -345,6 +284,7 @@ class ResidualAttentionBlock_MaPLe(nn.Module):
                         counter += 1
                 else:
                     # 文本层
+                    # raise ValueError("text transformer")
                     if not (counter > len(compound_prompts_deeper) - 1):
                         # x -> [77, N, D] typically
                         prefix = x[:1, :, :]
@@ -370,6 +310,9 @@ class ResidualAttentionBlock_MaPLe(nn.Module):
         # 后续不变: 经典的 transformer block
         x = x + self.attention(self.ln_1(x))
         x = x + self.mlp(self.ln_2(x))
+
+        if hasattr(self, 'features_dict'):
+            self.features_dict[f'refiner_layer_{counter}'] = x.clone().permute(1, 0, 2)
 
         return [x, compound_prompts_deeper, counter]
 
@@ -456,14 +399,7 @@ class Transformer(nn.Module):
         self.layers = layers
         # Implements respective encoder blocks for a given design choice
         current_trainer = design_details['trainer']
-        if current_trainer == 'IVLP' or current_trainer == 'VPT':
-            self.resblocks = nn.Sequential(*[ResidualAttentionBlock_IVLP(width, heads, attn_mask, True,
-                                                                         text_layer, i,
-                                                                         design_details) if prompts_needed > i
-                                             else ResidualAttentionBlock_IVLP(width, heads, attn_mask, False,
-                                                                              text_layer, i, design_details)
-                                             for i in range(layers)])
-        elif current_trainer == 'MaPLe':
+        if current_trainer == 'MaPLe':
             self.resblocks = nn.Sequential(
                 *[ResidualAttentionBlock_MaPLe(width, heads, attn_mask, design_details, text_layer, i)
                   for i in range(layers)])
@@ -472,8 +408,21 @@ class Transformer(nn.Module):
             assert current_trainer == 'CoOp' or current_trainer == 'CoCoOp'
             self.resblocks = nn.Sequential(*[ResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)])
 
-    def forward(self, x: torch.Tensor):
-        return self.resblocks(x)
+    def forward(self, combined, return_features=False):
+        if return_features:
+            x, compound_prompts_deeper, counter = combined
+            features_dict = {}
+
+            for i, block in enumerate(self.resblocks):
+                if hasattr(block, 'token_refiner'):
+                    block.features_dict = features_dict
+                combined = block([x, compound_prompts_deeper, counter])
+                x = combined[0]
+                counter = combined[2]
+
+            return [x, compound_prompts_deeper, counter, features_dict]
+        else:
+            return self.resblocks(combined)
 
 
 class Transformer_text(nn.Module):
@@ -484,16 +433,9 @@ class Transformer_text(nn.Module):
         self.layers = layers
         # Implements respective encoder blocks for a given design choice
         current_trainer = design_details['trainer']
-        if current_trainer == 'IVLP' or current_trainer == 'VPT':
-            self.resblocks = nn.Sequential(*[ResidualAttentionBlock_IVLP(width, heads, attn_mask, True,
-                                                                         text_layer, i,
-                                                                         design_details) if prompts_needed > i
-                                             else ResidualAttentionBlock_IVLP(width, heads, attn_mask, False,
-                                                                              text_layer, i, design_details)
-                                             for i in range(layers)])
-        elif current_trainer == 'MaPLe':
+        if current_trainer == 'MaPLe':
             self.resblocks = nn.Sequential(
-                *[ResidualAttentionBlock_MaPLe_text(width, heads, attn_mask, design_details, text_layer, i)
+                *[ResidualAttentionBlock_MaPLe(width, heads, attn_mask, design_details, text_layer, i)
                   for i in range(layers)])
         else:
             # Corresponds to default CoOp or CoCoOp
@@ -587,7 +529,8 @@ class VisionTransformer_MaPLe(nn.Module):
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
-    def forward(self, x: torch.Tensor, shared_ctx, compound_deeper_prompts):
+    def forward(self, x: torch.Tensor, shared_ctx, compound_deeper_prompts, return_features=False):
+        features_dict = {}
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -609,8 +552,12 @@ class VisionTransformer_MaPLe(nn.Module):
 
         x = x.permute(1, 0, 2)  # NLD -> LND
         # Again combine the inputs, so nn.sequential can work
-        outputs = self.transformer([x, compound_deeper_prompts, 0])  # third argument is counter
+        outputs = self.transformer([x, compound_deeper_prompts, 0], return_features=return_features)  # third argument is counter
         x = outputs[0]
+
+        if return_features:
+            features_dict.update(outputs[3])  # outputs[3]包含特征
+
         x = x.permute(1, 0, 2)  # LND -> NLD
 
         x = self.ln_post(x[:, 0, :])
@@ -618,6 +565,8 @@ class VisionTransformer_MaPLe(nn.Module):
         if self.proj is not None:
             x = x @ self.proj
 
+        if return_features:
+            return x, features_dict
         return x
 
 

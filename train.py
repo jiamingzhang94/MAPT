@@ -94,18 +94,19 @@ def extend_cfg(cfg):
     cfg.TRAINER.MAPLE.N_CTX = 16  # number of context vectors
     cfg.TRAINER.MAPLE.CTX_INIT = "a photo of a"  # initialization words
     # cfg.TRAINER.MAPLE.CTX_INIT = ""  # initialization words
-    cfg.TRAINER.MAPLE.PREC = "fp32"  # fp16, fp32, amp
+    cfg.TRAINER.MAPLE.PREC = "fp32 "  # fp16, fp32, amp
     cfg.TRAINER.MAPLE.PROMPT_DEPTH = args.depth # Max 12, minimum 0, for 1 it will act as shallow MaPLe (J=1)
     cfg.TRAINER.MAPLE.ADV_TRAIN = True
     cfg.DATASET.SUBSAMPLE_CLASSES = "all"  # all, base or new
-    cfg.TRAINER.MAPLE.EPSILON = 1 / 255
-    cfg.TRAINER.MAPLE.TEST_EPSILON = 1. / 255
+    cfg.TRAINER.MAPLE.EPSILON = 4 / 255
+    cfg.TRAINER.MAPLE.TEST_EPSILON = 4. / 255
     cfg.DATASET.NUM_SHOTS = args.num_shots
     cfg.TRAINER.MAPLE.ADV_STEPS = 5
     cfg.TRAINER.MAPLE.TEST_STEPS = 100
     cfg.TRAINER.MAPLE.SURROGATE = "self"
+    cfg.TRAINER.MAPLE.FEATURE_CONSTRAIN = args.feature
 
-    cfg.TRAINER.MAPLE.LAMBDA_CONSIST = 0.1
+    # cfg.TRAINER.MAPLE.LAMBDA_CONSIST = 0.1
     # cfg.TRAINER.MAPLE.PROMPT_HIDDEN_DIM = 1024
     # cfg.TRAINER.MAPLE.VISION_HIDDEN_DIM = 2048
 
@@ -157,7 +158,20 @@ def main(args):
     #     trainer.generate()
 
     if args.eval_only:
-        trainer.load_model(args.model_dir, epoch=args.load_epoch)
+        # Generate model name based on parameters if not provided
+        model_name = args.model_name
+        if not model_name and hasattr(cfg.TRAINER, 'MAPLE'):
+            # Format epsilon as a string without trailing zeros
+            eps_str = str(cfg.TRAINER.MAPLE.EPSILON).rstrip('0').rstrip('.') if cfg.TRAINER.MAPLE.EPSILON % 1 == 0 else str(cfg.TRAINER.MAPLE.EPSILON)
+            
+            # Include more parameters for better ablation study organization
+            depth_str = str(cfg.TRAINER.MAPLE.PROMPT_DEPTH)
+            shots_str = str(cfg.DATASET.NUM_SHOTS) if hasattr(cfg.DATASET, 'NUM_SHOTS') else "default"
+            
+            # Create model name with comprehensive parameter information
+            model_name = f"model_eps{eps_str}_steps{cfg.TRAINER.MAPLE.ADV_STEPS}_depth{depth_str}_shots{shots_str}.pth.tar"
+        
+        trainer.load_model(args.model_dir, epoch=args.load_epoch, model_name=model_name)
         trainer.test()
         trainer.test_adv(args.surrogate)
         return
@@ -170,7 +184,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=str, default="/home/dycpu6_8tssd1/jmzhang/datasets/", help="path to dataset")
-    parser.add_argument("--output-dir", type=str, default="", help="output directory")
+    parser.add_argument("--output-dir", type=str, default="checkpoints", help="output directory")
     parser.add_argument(
         "--resume",
         type=str,
@@ -195,8 +209,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset-config-file",
         type=str,
-        # default="configs/datasets/oxford_flowers.yaml",
-        default="configs/datasets/imagenet.yaml",
+        default="configs/datasets/oxford_flowers.yaml",
+        # default="configs/datasets/imagenet.yaml",
         help="path to config file for dataset setup",
     )
     # parser.add_argument("--generate", default=False)
@@ -209,6 +223,8 @@ if __name__ == "__main__":
     parser.add_argument("--depth", type=int, default=12, help="depth")
     parser.add_argument("--eps", type=float, default=1/255.)
     parser.add_argument("--num_shots", type=int, default=16)
+    parser.add_argument("--model-name", type=str, default=None, help="custom model name for loading/saving")
+    parser.add_argument("--feature", default=False)
 
 
 
