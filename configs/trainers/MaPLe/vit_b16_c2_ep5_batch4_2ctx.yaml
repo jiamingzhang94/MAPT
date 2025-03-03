@@ -33,3 +33,8 @@ TRAINER:
     CTX_INIT: "a photo of a"
     PREC: "fp32"
     PROMPT_DEPTH: 12
+    ADV_STEPS: 2
+    TEST_STEPS: 100
+    EPSILON: 1./255
+    TEST_EPSILON: 1./255
+    ADV_TRAIN: True

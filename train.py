@@ -94,15 +94,8 @@ def extend_cfg(cfg):
     cfg.TRAINER.MAPLE.N_CTX = 16  # number of context vectors
     cfg.TRAINER.MAPLE.CTX_INIT = "a photo of a"  # initialization words
     # cfg.TRAINER.MAPLE.CTX_INIT = ""  # initialization words
-    cfg.TRAINER.MAPLE.PREC = "fp32 "  # fp16, fp32, amp
     cfg.TRAINER.MAPLE.PROMPT_DEPTH = args.depth # Max 12, minimum 0, for 1 it will act as shallow MaPLe (J=1)
-    cfg.TRAINER.MAPLE.ADV_TRAIN = True
     cfg.DATASET.SUBSAMPLE_CLASSES = "all"  # all, base or new
-    cfg.TRAINER.MAPLE.EPSILON = 4 / 255
-    cfg.TRAINER.MAPLE.TEST_EPSILON = 4. / 255
-    cfg.DATASET.NUM_SHOTS = args.num_shots
-    cfg.TRAINER.MAPLE.ADV_STEPS = 5
-    cfg.TRAINER.MAPLE.TEST_STEPS = 100
     cfg.TRAINER.MAPLE.SURROGATE = "self"
     cfg.TRAINER.MAPLE.FEATURE_CONSTRAIN = args.feature
 
