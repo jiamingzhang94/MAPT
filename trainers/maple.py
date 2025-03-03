@@ -509,9 +509,15 @@ class MaPLe(TrainerX):
             #        consistency_loss * (1 - (30 - self.epoch) / 30) * 1000
 
             # loss_total = loss * 0.5 + adv_loss * 0.5
-            loss_total = loss * (self.max_epoch - self.epoch) / self.max_epoch + \
-                         adv_loss * (1 - (self.max_epoch - self.epoch) / self.max_epoch) + \
-                         consistency_loss * 1 * (1 - (self.max_epoch - self.epoch) / self.max_epoch)
+            # loss_total = loss * (self.max_epoch - self.epoch) / self.max_epoch + \
+            #              adv_loss * (1 - (self.max_epoch - self.epoch) / self.max_epoch) + \
+            #              consistency_loss * 1 * (1 - (self.max_epoch - self.epoch) / self.max_epoch)
+
+            sigmoid_scale = 10  # 可以调整 sigmoid 函数的陡峭程度
+            weight_factor = 1 / (1 + math.exp(-sigmoid_scale * (self.epoch / self.max_epoch - 0.5)))  # 中心点偏移到 0.5
+            loss_total = loss * (1 - weight_factor) + \
+                         adv_loss * weight_factor + \
+                         consistency_loss * 1 * weight_factor
 
             # print(f"Clean loss: {loss.item()}")
             # print(f"Adv loss: {adv_loss.item()}")
